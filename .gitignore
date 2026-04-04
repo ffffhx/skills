@@ -1,2 +1,4 @@
 .pw-profile/
 .playwright-cli/
+node_modules/
+wechat-mp-publish-manual.md
