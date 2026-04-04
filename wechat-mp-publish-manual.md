@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-这是一个面向 Agent 的微信公众号发布项目，目标是把一篇本地 Markdown 文件自动转换为公众号图文内容，并进一步完成：
+这是一个面向 Agent 的微信公众号发布项目，目标是把一篇本地 Markdown 或 PDF 文件自动转换为公众号图文内容，并进一步完成：
 
 - 保存到公众号草稿箱
 - 或直接发布为公众号文章
@@ -22,7 +22,7 @@
 
 希望最终达到的体验是：
 
-1. 用户只需要给 Agent 一篇 `.md` 文件
+1. 用户只需要给 Agent 一篇 `.md` 或 `.pdf` 文件
 2. Agent 自动识别标题、作者、正文
 3. 自动把 Markdown 渲染成公众号可接受的 HTML
 4. 自动登录或复用已保存登录态打开公众号后台
@@ -89,6 +89,7 @@
 ## 输入侧
 
 - 支持直接传 `.md` 文件
+- 支持直接传 `.pdf` 文件
 - 支持直接传入 HTML 内容
 - 支持直接传入纯文本内容
 - `--content-format auto` 时自动识别格式
@@ -100,6 +101,15 @@
 - 如果没有一级标题，则回退到文件名
 - 自动把 Markdown 转为公众号 HTML
 - 支持基础标题、段落、列表、引用、代码块、链接、图片
+
+## PDF 处理侧
+
+- 自动识别 `.pdf` 文件
+- 优先提取 PDF metadata 标题
+- 若 metadata 不可用，则回退到文件名
+- 自动提取每页文本并按分页结构转为公众号 HTML
+- 适用于“可复制文本”的 PDF
+- 纯扫描图片 PDF 当前暂不支持
 
 ## 元信息默认值
 
@@ -184,6 +194,24 @@ python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
   --content-file "/absolute/path/to/article.md"
 ```
 
+## 3）把 PDF 保存到草稿箱
+
+```bash
+python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
+  --publish-mode web \
+  --action draft \
+  --content-file "/absolute/path/to/article.pdf"
+```
+
+## 4）把 PDF 直接发布
+
+```bash
+python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
+  --publish-mode web \
+  --action publish \
+  --content-file "/absolute/path/to/article.pdf"
+```
+
 ## 3）指定 AI 封面提示词
 
 ```bash
@@ -216,7 +244,7 @@ CLI 帮助入口：`/Users/bytedance/code/skills/.trae/skills/wechat-mp-publish/
 - `--content`：直接传入内容字符串
 - `--publish-mode`：`auto | web | api`
 - `--action`：`draft | publish`
-- `--content-format`：`auto | markdown | html | text`
+- `--content-format`：`auto | markdown | html | text | pdf`
 - `--title`：手工指定标题；不传则自动提取
 - `--author`：手工指定作者；不传默认 `繁漪`
 - `--digest`：手工指定摘要
@@ -240,11 +268,12 @@ CLI 会从以下两种输入中二选一：
 
 如果 `--content-format=auto`，会按以下顺序判断：
 
-1. 文件扩展名是否是 `.md/.markdown/.mdown`
-2. 文件扩展名是否是 `.html/.htm`
-3. 内容是否看起来像 HTML
-4. 内容是否看起来像 Markdown
-5. 否则按纯文本处理
+1. 文件扩展名是否是 `.pdf`
+2. 文件扩展名是否是 `.md/.markdown/.mdown`
+3. 文件扩展名是否是 `.html/.htm`
+4. 内容是否看起来像 HTML
+5. 内容是否看起来像 Markdown
+6. 否则按纯文本处理
 
 ## Step 3：提取标题
 
@@ -252,8 +281,9 @@ CLI 会从以下两种输入中二选一：
 
 1. 如果传了 `--title`，直接使用
 2. 否则如果是 Markdown，优先取第一条一级标题 `# 标题`
-3. 如果没有一级标题，则回退到文件名
-4. 再不行才回退到正文第一条非空文本
+3. 否则如果是 PDF，优先取 PDF metadata 标题
+4. 如果没有可用标题，则回退到文件名
+5. 再不行才回退到正文第一条非空文本
 
 ## Step 4：生成摘要
 
@@ -274,6 +304,7 @@ Web 模式会：
 - 若未登录，等待扫码
 - 若已登录，直接进入编辑页
 - 自动填写标题、作者、摘要、正文
+- 若输入是 PDF，先提取文本再写入正文编辑区
 - 尝试调用后台 AI 生封面
 - 根据 `action` 选择保存草稿或直接发布
 
@@ -487,9 +518,13 @@ python3 /Users/bytedance/code/skills/.trae/skills/wechat-mp-publish/scripts/publ
 
 “把 `/absolute/path/to/article.md` 转成公众号文章并保存到草稿箱。”
 
+“把 `/absolute/path/to/article.pdf` 转成公众号文章并保存到草稿箱。”
+
 ## 直接发布
 
 “把 `/absolute/path/to/article.md` 转成公众号文章并直接发布。”
+
+“把 `/absolute/path/to/article.pdf` 转成公众号文章并直接发布。”
 
 ## 指定 AI 封面风格
 
@@ -504,9 +539,10 @@ python3 /Users/bytedance/code/skills/.trae/skills/wechat-mp-publish/scripts/publ
 - “后台 AI 生成封面”属于页面能力，是否稳定命中依赖当前后台 UI
 - 当前默认是 Playwright 持久化浏览器方案，不是直接接管已打开的真实 Chrome
 - 如果想做到完全接管当前 Chrome，会更适合把这条链路切到 `mcp-chrome`
+- 纯扫描图片 PDF 暂不支持，需先 OCR 成可提取文本的 PDF 或 Markdown
 
 ---
 
 ## 一句话总结
 
-这个项目现在已经可以做到：**给 Agent 一篇 Markdown 文件，让它自动生成公众号文章，并保存为草稿或直接发布；个人主体账号默认走后台自动化，第二次默认免扫码。**
+这个项目现在已经可以做到：**给 Agent 一篇 Markdown 或 PDF 文件，让它自动生成公众号文章，并保存为草稿或直接发布；个人主体账号默认走后台自动化，第二次默认免扫码。**
