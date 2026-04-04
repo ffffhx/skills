@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--content-format",
-        choices=("auto", "html", "text", "markdown"),
+        choices=("auto", "html", "text", "markdown", "pdf"),
         default="auto",
         help="Input content format, defaults to auto",
     )
@@ -94,7 +94,14 @@ def read_source(args: argparse.Namespace) -> Tuple[str, Optional[Path]]:
         raise WeChatPublishError("必须且只能提供 --content 或 --content-file 其中一种")
 
     source_path = Path(args.content_file) if args.content_file else None
+    if args.content and args.content_format == "pdf":
+        raise WeChatPublishError("PDF 模式仅支持 --content-file，请传入 PDF 文件路径")
+
     if args.content_file:
+        if not source_path.exists():
+            raise FileNotFoundError(source_path)
+        if detect_content_format("", args.content_format, source_path) == "pdf":
+            return "", source_path
         content = source_path.read_text(encoding="utf-8")
     else:
         content = args.content
@@ -105,16 +112,19 @@ def read_source(args: argparse.Namespace) -> Tuple[str, Optional[Path]]:
     return content, source_path
 
 
-def read_content(args: argparse.Namespace) -> Tuple[str, str, Optional[Path]]:
+def read_content(args: argparse.Namespace) -> Tuple[str, str, Optional[Path], Optional[str]]:
     content, source_path = read_source(args)
 
     content_format = detect_content_format(content, args.content_format, source_path)
 
+    if content_format == "pdf":
+        raw_text, rendered_html, pdf_title = pdf_to_wechat_html(source_path)
+        return raw_text, rendered_html, source_path, pdf_title
     if content_format == "text":
-        return content, text_to_html(content), source_path
+        return content, text_to_html(content), source_path, None
     if content_format == "markdown":
-        return content, markdown_to_wechat_html(content), source_path
-    return content, content, source_path
+        return content, markdown_to_wechat_html(content), source_path, None
+    return content, content, source_path, None
 
 
 def resolve_publish_mode(args: argparse.Namespace) -> str:
@@ -127,9 +137,12 @@ def resolve_author(args: argparse.Namespace) -> str:
     return (args.author or os.getenv("WECHAT_MP_AUTHOR", "") or "繁漪").strip()
 
 
-def resolve_title(args: argparse.Namespace, raw_content: str, source_path: Optional[Path]) -> str:
+def resolve_title(args: argparse.Namespace, raw_content: str, source_path: Optional[Path], extracted_title: Optional[str] = None) -> str:
     if args.title and args.title.strip():
         return args.title.strip()
+
+    if extracted_title and extracted_title.strip():
+        return extracted_title.strip()
 
     if detect_content_format(raw_content, args.content_format, source_path) == "markdown":
         title = extract_title_from_markdown(raw_content)
@@ -174,6 +187,59 @@ def build_digest(html_content: str, limit: int = 120) -> str:
     plain = re.sub(r"<[^>]+>", " ", plain)
     plain = html.unescape(re.sub(r"\s+", " ", plain)).strip()
     return plain[:limit]
+
+
+def pdf_to_wechat_html(source_path: Optional[Path]) -> Tuple[str, str, Optional[str]]:
+    if source_path is None:
+        raise WeChatPublishError("PDF 模式必须提供本地文件路径")
+
+    try:
+        from pypdf import PdfReader
+    except ImportError as exc:
+        raise WeChatPublishError("缺少 pypdf 依赖，请先执行: python3 -m pip install pypdf") from exc
+
+    try:
+        reader = PdfReader(str(source_path))
+    except Exception as exc:
+        raise WeChatPublishError(f"读取 PDF 失败: {exc}") from exc
+
+    metadata = reader.metadata or {}
+    metadata_title = str(metadata.get("/Title") or "").strip() or None
+    total_pages = len(reader.pages)
+    raw_pages = []
+    html_pages = []
+
+    for index, page in enumerate(reader.pages, start=1):
+        try:
+            text = page.extract_text() or ""
+        except Exception as exc:
+            raise WeChatPublishError(f"提取 PDF 第 {index} 页内容失败: {exc}") from exc
+
+        cleaned = normalize_pdf_text(text)
+        if not cleaned:
+            continue
+
+        raw_pages.append(cleaned)
+        if total_pages > 1:
+            html_pages.append(
+                f'<h2 style="margin: 1.4em 0 0.6em; font-size: 22px; line-height: 1.4; font-weight: 700; color: #111;">第 {index} 页</h2>'
+            )
+        html_pages.append(text_to_html(cleaned))
+
+    if not raw_pages:
+        raise WeChatPublishError("PDF 中未提取到可用文本，暂不支持纯扫描图片 PDF")
+
+    raw_text = "\n\n".join(raw_pages)
+    rendered_html = "\n".join(html_pages)
+    return raw_text, rendered_html, metadata_title
+
+
+def normalize_pdf_text(text: str) -> str:
+    normalized = text.replace("\r\n", "\n").replace("\r", "\n")
+    normalized = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", " ", normalized)
+    normalized = re.sub(r"[ \t]+", " ", normalized)
+    normalized = re.sub(r"\n{3,}", "\n\n", normalized)
+    return normalized.strip()
 
 
 def run_web_publish(
@@ -225,6 +291,8 @@ def detect_content_format(content: str, requested_format: str, source_path: Opti
         return requested_format
 
     suffix = source_path.suffix.lower() if source_path else ""
+    if suffix == ".pdf":
+        return "pdf"
     if suffix in {".md", ".markdown", ".mdown"}:
         return "markdown"
     if suffix in {".html", ".htm"}:
@@ -566,8 +634,8 @@ def extract_article_url(publish_response: dict) -> str:
 def main() -> int:
     try:
         args = parse_args()
-        raw_content, content, source_path = read_content(args)
-        title = resolve_title(args, raw_content, source_path)
+        raw_content, content, source_path, extracted_title = read_content(args)
+        title = resolve_title(args, raw_content, source_path, extracted_title)
         author = resolve_author(args)
         digest = args.digest.strip() or build_digest(content)
         publish_mode = resolve_publish_mode(args)

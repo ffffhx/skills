@@ -7,9 +7,9 @@ description: "自动将文章发布到微信公众号：优先走公众号后台
 
 ## 目标
 
-给定一篇 Markdown 文件或正文内容，自动完成微信公众号图文的完整发布链路，并根据账号类型自动选择模式：
+给定一篇 Markdown / PDF 文件或正文内容，自动完成微信公众号图文的完整发布链路，并根据账号类型自动选择模式：
 
-1. 从 `.md` 文件自动提取文章标题
+1. 从 `.md` / `.pdf` 文件自动提取文章标题
 2. 默认作者使用 `繁漪`
 3. 个人主体账号：走公众号后台浏览器自动化
 4. 自动把 Markdown 转为公众号 HTML
@@ -39,7 +39,7 @@ description: "自动将文章发布到微信公众号：优先走公众号后台
 - `content`（必填）：文章正文
 - `publish_mode`（可选）：`auto`、`web`、`api`，默认 `auto`
 - `action`（可选）：`draft` 或 `publish`，默认 `draft`
-- `content_format`（可选）：`auto`、`markdown`、`html` 或 `text`，默认 `auto`
+- `content_format`（可选）：`auto`、`markdown`、`html`、`text` 或 `pdf`，默认 `auto`
 - `thumb_media_id`（可选）：仅 API 模式需要
 - `author`（可选）：作者名，默认读取 `WECHAT_MP_AUTHOR`，再回退到 `繁漪`
 - `digest`（可选）：摘要
@@ -76,6 +76,7 @@ description: "自动将文章发布到微信公众号：优先走公众号后台
 ### 2）整理文章内容
 
 - 如果拿到的是 Markdown，先自动转换成适合公众号图文的 HTML，再发布。
+- 如果拿到的是 PDF，先提取文本，再按公众号文章样式转成 HTML，再发布。
 - 如果拿到的是纯文本，先按段落转为安全 HTML。
 - 如果拿到的是 HTML，直接使用。
 - 不要把 token、secret、cookie、手机号等敏感信息写进正文。
@@ -102,6 +103,15 @@ python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
   --content-file "/absolute/path/to/article.md"
 ```
 
+如果输入是 PDF，也可以直接这样调用：
+
+```bash
+python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
+  --publish-mode web \
+  --action draft \
+  --content-file "/absolute/path/to/article.pdf"
+```
+
 底层后台自动化脚本位置：
 
 `npx playwright test .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp_web.spec.js --headed --workers=1`
@@ -112,7 +122,9 @@ python3 .trae/skills/wechat-mp-publish/scripts/publish_wechat_mp.py \
 - 复用持久化浏览器目录，第二次起默认免扫码
 - 新建图文页
 - 从 Markdown 第一条一级标题自动提取标题；若没有则回退文件名
+- PDF 优先取文档 metadata 标题；没有则回退文件名
 - 自动把 Markdown 转成公众号 HTML
+- 自动把 PDF 文本提取并按分页结构转成公众号 HTML
 - 默认作者使用 `繁漪`
 - 自动填写标题、作者、摘要、正文
 - 尝试调用后台 AI 生图能力生成封面
@@ -228,6 +240,7 @@ API 模式成功时输出 JSON，字段示例：
 - 只做“创建草稿并发布文章”，不要顺手删除历史草稿/已发布文章。
 - API 模式缺少 `thumb_media_id` 时直接报错，不要伪造封面。
 - 不要把 Markdown 原样直接提交给微信接口；必须先经过脚本转换。
+- PDF 当前只支持可提取文本的文档；纯扫描图片 PDF 暂不支持。
 
 ## 示例触发语句
 
@@ -237,5 +250,6 @@ API 模式成功时输出 JSON，字段示例：
 - “不要 `thumb_media_id`，直接用后台 AI 生成封面”
 - “直接指定一个 md 文件，帮我存到公众号草稿箱”
 - “直接指定一个 md 文件，帮我发成公众号文章”
+- “把项目里的 PDF 转成公众号文章并保存草稿”
 - “读取这个 markdown 文件并直接发布到公众号”
 - “读取这个 html 文件并发布成公众号图文”
